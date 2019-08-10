@@ -247,6 +247,67 @@ Tab.onInitialized.addListener((tab, _info) => {
   tab.$TST.setAttribute(Constants.kAPI_TAB_ID, tab.id || -1);
   tab.$TST.setAttribute(Constants.kAPI_WINDOW_ID, tab.windowId || -1);
 
+  const label = document.createElement('span');
+  label.classList.add(Constants.kLABEL);
+  const labelContent = label.appendChild(document.createElement('span'));
+  labelContent.classList.add(`${Constants.kLABEL}-content`);
+  tabElement.appendChild(label);
+
+  const twisty = document.createElement('span');
+  twisty.classList.add(Constants.kTWISTY);
+  twisty.setAttribute('title', browser.i18n.getMessage('tab_twisty_collapsed_tooltip'));
+  tabElement.insertBefore(twisty, label);
+
+  const favicon = document.createElement('span');
+  favicon.classList.add(Constants.kFAVICON);
+  const faviconImage = favicon.appendChild(document.createElement('img'));
+  faviconImage.classList.add(Constants.kFAVICON_IMAGE);
+  const defaultIcon = favicon.appendChild(document.createElement('span'));
+  defaultIcon.classList.add(Constants.kFAVICON_BUILTIN);
+  defaultIcon.classList.add(Constants.kFAVICON_DEFAULT); // just for backward compatibility, and this should be removed from future versions
+  const throbber = favicon.appendChild(document.createElement('span'));
+  throbber.classList.add(Constants.kTHROBBER);
+  tabElement.insertBefore(favicon, label);
+
+  const counter = document.createElement('span');
+  counter.classList.add(Constants.kCOUNTER);
+  tabElement.appendChild(counter);
+
+  const soundButton = document.createElement('button');
+  soundButton.classList.add(Constants.kSOUND_BUTTON);
+  tabElement.appendChild(soundButton);
+
+  const closebox = document.createElement('span');
+  closebox.classList.add(Constants.kCLOSEBOX);
+  closebox.setAttribute('title', browser.i18n.getMessage('tab_closebox_tab_tooltip'));
+  closebox.setAttribute('draggable', true); // this is required to cancel click by dragging
+  tabElement.appendChild(closebox);
+
+  const burster = document.createElement('span');
+  burster.classList.add(Constants.kBURSTER);
+  tabElement.appendChild(burster);
+
+  const activeMarker = document.createElement('span');
+  activeMarker.classList.add(Constants.kHIGHLIGHTER);
+  tabElement.appendChild(activeMarker);
+
+  const identityMarker = document.createElement('span');
+  identityMarker.classList.add(Constants.kCONTEXTUAL_IDENTITY_MARKER);
+  tabElement.appendChild(identityMarker);
+
+  const leftEdge = document.createElement('span');
+  leftEdge.classList.add('left-edge');
+  tabElement.appendChild(leftEdge);
+
+  const extraItemsContainerBehind = document.createElement('span');
+  extraItemsContainerBehind.classList.add(Constants.kEXTRA_ITEMS_CONTAINER);
+  extraItemsContainerBehind.classList.add('behind');
+  tabElement.appendChild(extraItemsContainerBehind);
+
+  tabElement.setAttribute('draggable', true);
+
+  applyStatesToElement(tab);
+
   const window  = TabsStore.windows.get(tab.windowId);
   const nextTab = tab.$TST.unsafeNextTab;
   log(`creating tab element for ${tab.id} before ${nextTab && nextTab.id}, tab, nextTab = `, tab, nextTab);
