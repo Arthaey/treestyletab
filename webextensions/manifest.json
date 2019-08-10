@@ -222,7 +222,7 @@
   "default_locale": "en",
   "applications": {
     "gecko": {
-      "id": "treestyletab@piro.sakura.ne.jp",
+      "id": "treestyletab@piro.sakura.ne.jp-arthaey",
       "strict_min_version": "65.0"
     }
   }
