@@ -11,6 +11,7 @@ import TabIdFixer from '/extlib/TabIdFixer.js';
 import {
   log as internalLogger,
   nextFrame,
+  mapAndFilter,
   configs
 } from '/common/common.js';
 import * as Constants from '/common/constants.js';
@@ -334,7 +335,7 @@ function applyBrowserTheme(theme) {
       // https://searchfox.org/mozilla-central/rev/532e4b94b9e807d157ba8e55034aef05c1196dc9/browser/base/content/browser.css#20
       extraColors.push('--browser-bg-active-for-header-image: rgba(255, 255, 255, 0.4)');
       // https://searchfox.org/mozilla-central/rev/532e4b94b9e807d157ba8e55034aef05c1196dc9/toolkit/themes/windows/global/global.css#138
-      if (Color.isBrightColor(themeFrameColor))
+      if (Color.isBrightColor(inactiveTextColor))
         extraColors.push('--browser-textshadow-for-header-image: 1px 1px 1.5px black'); // for bright text
       else
         extraColors.push('--browser-textshadow-for-header-image: 0 -0.5px 1.5px white'); // for dark text
@@ -554,8 +555,14 @@ async function importTabsFromBackground() {
 
 
 export async function confirmToCloseTabs(tabs, _options = {}) {
-  tabs = tabs.filter(tab => !configs.grantedRemovingTabIds.includes(tab.id));
-  const tabIds = tabs.map(tab => tab.id);
+  const tabIds = [];
+  tabs = tabs.filter(tab => {
+    if (!configs.grantedRemovingTabIds.includes(tab.id)) {
+      tabIds.push(tab.id);
+      return true;
+    }
+    return false;
+  });
   log('confirmToCloseTabs: ', tabIds);
   const count = tabIds.length;
   if (count <= 1 ||
@@ -890,7 +897,7 @@ BackgroundConnection.onMessage.addListener(async message => {
   switch (message.type) {
     case Constants.kCOMMAND_REMOVE_TABS_INTERNALLY:
       await Tab.waitUntilTracked(message.tabIds, { element: true });
-      TabsInternalOperation.removeTabs(message.tabIds.map(id => Tab.get(id)));
+      TabsInternalOperation.removeTabs(mapAndFilter(message.tabIds, id => Tab.get(id)));
       break;
 
     case Constants.kCOMMAND_BLOCK_USER_OPERATIONS:
@@ -920,6 +927,21 @@ BackgroundConnection.onMessage.addListener(async message => {
       reserveToUpdateTabbarLayout({
         reason:  Constants.kTABBAR_UPDATE_REASON_TAB_CLOSE,
         timeout: configs.collapseDuration
+      });
+    }; break;
+
+    case Constants.kCOMMAND_NOTIFY_TAB_SHOWN:
+      if (message.tabId)
+        await Tab.waitUntilTracked(message.tabId, { element: true });
+      reserveToUpdateTabbarLayout({
+        reason: Constants.kTABBAR_UPDATE_REASON_TAB_OPEN
+      });
+      break;
+
+    case Constants.kCOMMAND_NOTIFY_TAB_HIDDEN: {
+      await Tab.waitUntilTracked(message.tabId, { element: true });
+      reserveToUpdateTabbarLayout({
+        reason: Constants.kTABBAR_UPDATE_REASON_TAB_CLOSE
       });
     }; break;
 
@@ -973,13 +995,15 @@ BackgroundConnection.onMessage.addListener(async message => {
       MetricsData.add('Tabs.onWindowRestoring restore end');
     }; break;
 
-    case Constants.kCOMMAND_BOOKMARK_TAB_WITH_DIALOG:
-      Bookmark.bookmarkTab(Tab.get(message.tabId), { showDialog: true });
-      break;
+    case Constants.kCOMMAND_BOOKMARK_TAB_WITH_DIALOG: {
+      const options = Object.assign({}, message.options || {}, { showDialog: true });
+      Bookmark.bookmarkTab(Tab.get(message.tabId), options);
+    }; break;
 
-    case Constants.kCOMMAND_BOOKMARK_TABS_WITH_DIALOG:
-      Bookmark.bookmarkTabs(message.tabIds.map(id => Tab.get(id)), { showDialog: true });
-      break;
+    case Constants.kCOMMAND_BOOKMARK_TABS_WITH_DIALOG: {
+      const options = Object.assign({}, message.options || {}, { showDialog: true });
+      Bookmark.bookmarkTabs(mapAndFilter(message.tabIds, id => Tab.get(id)), options);
+    }; break;
   }
 });
 

@@ -8,6 +8,9 @@
 import {
   log as internalLogger,
   dumpTab,
+  mapAndFilter,
+  mapAndFilterUniq,
+  toLines,
   configs
 } from './common.js';
 
@@ -264,7 +267,25 @@ export default class Tab {
   get isNewTabCommandTab() {
     if (!configs.guessNewOrphanTabAsOpenedByNewTabCommand)
       return false;
-    return this.tab.url == configs.guessNewOrphanTabAsOpenedByNewTabCommandUrl;
+
+    const newTabUrl = configs.guessNewOrphanTabAsOpenedByNewTabCommandUrl;
+    if (this.tab.url != newTabUrl)
+      return false;
+
+    // Firefox always opens a blank tab as the placeholder, when trying to
+    // open a bookmark in a new tab. So, we cannot determine is the tab
+    // really opened as a new blank tab or just as a placeholder for an
+    // "Open in New Tab" operation, when the user choose the "Blank Page"
+    // as the new tab page.
+    // But, when "Blank Page" is chosen as the new tab page, Firefox loads
+    // "about:blank" into a newly opened blank tab. As the result both current
+    // URL and the previous URL become "about:blank". This is an important
+    // difference between "a new blank tab" and "a blank tab opened for an
+    // Open in New Tab command".
+    if (newTabUrl == 'about:blank')
+      return this.tab.previousUrl == 'about:blank';
+
+    return true;
   }
 
   get isGroupTab() {
@@ -478,10 +499,15 @@ export default class Tab {
     return !!this.parentId;
   }
 
-  get ancestors() {
+  get ancestorIds() {
     if (!this.cachedAncestorIds)
-      return this.updateAncestors();
-    return this.cachedAncestorIds.map(id => Tab.get(id)).filter(TabsStore.ensureLivingTab);
+      this.updateAncestors();
+    return this.cachedAncestorIds;
+  }
+
+  get ancestors() {
+    return mapAndFilter(this.ancestorIds,
+                        id => TabsStore.ensureLivingTab(Tab.get(id)) || undefined);
   }
 
   updateAncestors() {
@@ -537,20 +563,19 @@ export default class Tab {
   }
 
   set children(tabs) {
-    const ancestorsOfSelf = this.ancestors;
-    tabs = tabs.filter(tab => {
-      if (!ancestorsOfSelf.includes(tab))
-        return true;
+    const ancestorIds = this.ancestorIds;
+    const newChildIds = mapAndFilter(tabs, tab => {
+      const id = typeof tab == 'number' ? tab : tab && tab.id;
+      if (!ancestorIds.includes(id))
+        return TabsStore.ensureLivingTab(Tab.get(id)) ? id : undefined;
       console.log('FATAL ERROR: Cyclic tree structure has detected and prevented. ', {
-        ancestorsOfSelf,
+        ancestorsOfSelf: this.ancestors,
         tabs,
         tab,
         stack: new Error().stack
       });
-      return false;
+      return undefined;
     });
-
-    const newChildIds = tabs.map(tab => typeof tab == 'number' ? tab : tab && tab.id).filter(id => id);
     if (newChildIds.join('|') == this.childIds.join('|'))
       return tabs;
 
@@ -575,7 +600,8 @@ export default class Tab {
     return tabs;
   }
   get children() {
-    return this.childIds.map(id => Tab.get(id)).filter(TabsStore.ensureLivingTab);
+    return mapAndFilter(this.childIds,
+                        id => TabsStore.ensureLivingTab(Tab.get(id)) || undefined);
   }
 
   get firstChild() {
@@ -589,7 +615,10 @@ export default class Tab {
   }
 
   sortChildren() {
-    this.childIds = Tab.sort(this.childIds.map(id => Tab.get(id))).map(tab => tab && tab.id);
+    // Tab.get(tabId) calls into TabsStore.tabs.get(tabId), which is just a
+    // Map. This is acceptable to repeat in order to avoid two array copies,
+    // especially on larger tab sets.
+    this.childIds.sort((a, b) => Tab.compare(Tab.get(a), Tab.get(b)));
     this.invalidateCachedDescendants();
   }
 
@@ -600,7 +629,8 @@ export default class Tab {
   get descendants() {
     if (!this.cachedDescendantIds)
       return this.updateDescendants();
-    return this.cachedDescendantIds.map(id => Tab.get(id)).filter(TabsStore.ensureLivingTab);
+    return mapAndFilter(this.cachedDescendantIds,
+                        id => TabsStore.ensureLivingTab(Tab.get(id)) || undefined);
   }
 
   updateDescendants() {
@@ -1001,6 +1031,9 @@ export default class Tab {
   }
 
   memorizeNeighbors() {
+    if (!this.tab) // already closed tab
+      return;
+
     const previousTab = this.unsafePreviousTab;
     this.lastPreviousTabId = previousTab && previousTab.id;
 
@@ -1138,15 +1171,9 @@ Tab.needToWaitTracked = (windowId) => {
 };
 
 Tab.waitUntilTrackedAll = async (windowId, options = {}) => {
-  const tabSets = [];
-  if (windowId) {
-    tabSets.push(mIncompletelyTrackedTabs.get(windowId));
-  }
-  else {
-    for (const tabs of mIncompletelyTrackedTabs.values()) {
-      tabSets.push(tabs);
-    }
-  }
+  const tabSets = windowId ?
+    [mIncompletelyTrackedTabs.get(windowId)] :
+    [...mIncompletelyTrackedTabs.values()];
   return Promise.all(tabSets.map(tabs => {
     if (!tabs)
       return;
@@ -1779,28 +1806,27 @@ Tab.doAndGetNewTabs = async (asyncTask, windowId) => {
     tabsQueryOptions.windowId = windowId;
   }
   const beforeTabs = await browser.tabs.query(tabsQueryOptions).catch(ApiTabs.createErrorHandler());
-  const beforeIds  = beforeTabs.map(tab => tab.id);
+  const beforeIds  = mapAndFilterUniq(beforeTabs, tab => tab.id, { set: true });
   await asyncTask();
   const afterTabs = await browser.tabs.query(tabsQueryOptions).catch(ApiTabs.createErrorHandler());
-  const addedTabs = afterTabs.filter(afterTab => !beforeIds.includes(afterTab.id));
-  return addedTabs.map(tab => Tab.get(tab.id));
+  const addedTabs = mapAndFilter(afterTabs,
+                                 tab => !beforeIds.has(tab.id) && Tab.get(tab.id) || undefined);
+  return addedTabs;
 };
 
-Tab.sort = tabs => {
-  if (tabs.length == 0)
-    return tabs;
-  return tabs.sort((a, b) => a.index - b.index);
-};
+Tab.compare = (a, b) => a.index - b.index;
+
+Tab.sort = tabs => tabs.length == 0 ? tabs : tabs.sort(Tab.compare);
 
 Tab.dumpAll = windowId => {
   if (!configs.debug)
     return;
-  const output = ['dumpAllTabs'];
+  let output = 'dumpAllTabs';
   for (const tab of Tab.getAllTabs(windowId, {iterator: true })) {
-    output.push(tab.$TST.ancestors.reverse().concat([tab])
-      .map(tab => tab.id + (tab.pinned ? ' [pinned]' : ''))
-      .join(' => '));
+    output += '\n' + toLines([...tab.$TST.ancestors.reverse(), tab],
+                             tab => `${tab.id}${tab.pinned ? ' [pinned]' : ''}`,
+                             ' => ');
   }
-  log(output.join('\n'));
+  log(output);
 };
 

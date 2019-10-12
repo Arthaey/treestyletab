@@ -114,6 +114,7 @@ export const configs = new Configs({
   tabDragBehavior:      Constants.kDRAG_BEHAVIOR_TEAR_OFF | Constants.kDRAG_BEHAVIOR_WHOLE_TREE,
   tabDragBehaviorShift: Constants.kDRAG_BEHAVIOR_WHOLE_TREE | Constants.kDRAG_BEHAVIOR_ALLOW_BOOKMARK,
   showTabDragBehaviorNotification: true,
+  guessDraggedNativeTabs: true,
 
   fixupTreeOnTabVisibilityChanged: false,
 
@@ -204,6 +205,7 @@ export const configs = new Configs({
   moveDroppedTabToNewWindowForUnhandledDragEvent: true, // see also: https://github.com/piroor/treestyletab/issues/1646
   autoDiscardTabForUnexpectedFocus: true,
   autoDiscardTabForUnexpectedFocusDelay: 500,
+  migratedBookmarkUrls: [],
   knownExternalAddons: [
     'multipletab@piro.sakura.ne.jp'
   ],
@@ -305,7 +307,7 @@ export const configs = new Configs({
 
   testKey: 0 // for tests/utils.js
 }, {
-  localKeys: `
+  localKeys: mapAndFilter(`
     optionsExpandedSections
     sidebarPosition
     sidebarDirection
@@ -324,7 +326,10 @@ export const configs = new Configs({
     requestingPermissions
     requestingPermissionsNatively
     testKey
-  `.trim().split('\n').map(key => key.trim()).filter(key => key && key.indexOf('//') != 0)
+  `.trim().split('\n'), key => {
+    key = key.trim();
+    return key && key.indexOf('//') != 0 && key;
+  })
 });
 
 configs.$loaded.then(() => {
@@ -343,6 +348,8 @@ export function log(module, ...args)
   if (!logging)
     return;
 
+  args = args.map(arg => typeof arg == 'function' ? arg() : arg);
+
   const nest = (new Error()).stack.split('\n').length;
   let indent = '';
   for (let i = 0; i < nest; i++) {
@@ -358,7 +365,10 @@ export function log(module, ...args)
   if (useConsole)
     console.log(line, ...args);
 
-  log.logs.push(`${line} ${args.map(arg => uneval(arg)).join(', ')}`);
+  log.logs.push(`${line} ${args.reduce((output, arg, index) => {
+    output += `${index == 0 ? '' : ', '}${uneval(arg)}`;
+    return output;
+  }, '')}`);
   log.logs = log.logs.slice(-log.max);
 }
 log.context = '?';
@@ -438,4 +448,81 @@ export async function notify(params = {}) {
     onClicked = null;
   }
   await browser.notifications.clear(id);
+}
+
+
+// Helper functions for optimization
+// Originally implemented by @bb010g at
+// https://github.com/piroor/treestyletab/pull/2368/commits/9d184c4ac6c9977d2557cd17cec8c2a0f21dd527
+
+// For better performance the callback function must return "undefined"
+// when the item should not be included. "null", "false", and other false
+// values will be included to the mapped result.
+export function mapAndFilter(values, mapper) {
+  /* This function logically equals to:
+  return values.reduce((mappedValues, value) => {
+    value = mapper(value);
+    if (value !== undefined)
+      mappedValues.push(value);
+    return mappedValues;
+  }, []);
+  */
+  const maxi = ('length' in values ? values.length : values.size) >>> 0; // define as unsigned int
+  const mappedValues = new Array(maxi); // prepare with enough size at first, to avoid needless re-allocation
+  let count = 0,
+      value, // this must be defined outside of the loop, to avoid needless re-allocation
+      mappedValue; // this must be defined outside of the loop, to avoid needless re-allocation
+  for (value of values) {
+    mappedValue = mapper(value);
+    if (mappedValue !== undefined)
+      mappedValues[count++] = mappedValue;
+  }
+  mappedValues.length = count; // shrink the array at last
+  return mappedValues;
+}
+
+export function mapAndFilterUniq(values, mapper, options = {}) {
+  const mappedValues = new Set();
+  let value, // this must be defined outside of the loop, to avoid needless re-allocation
+      mappedValue; // this must be defined outside of the loop, to avoid needless re-allocation
+  for (value of values) {
+    mappedValue = mapper(value);
+    if (mappedValue !== undefined)
+      mappedValues.add(mappedValue);
+  }
+  return options.set ? mappedValues : Array.from(mappedValues);
+}
+
+export function countMatched(values, matcher) {
+  /* This function logically equals to:
+  return values.reduce((count, value) => {
+    if (matcher(value))
+      count++;
+    return count;
+  }, 0);
+  */
+  let count = 0,
+      value; // this must be defined outside of the loop, to avoid needless re-allocation
+  for (value of values) {
+    if (matcher(value))
+      count++;
+  }
+  return count;
+}
+
+export function toLines(values, mapper, separator = '\n') {
+  /* This function logically equals to:
+  return values.reduce((output, value, index) => {
+    output += `${index == 0 ? '' : '\n'}${mapper(value)}`;
+    return output;
+  }, '');
+  */
+  const maxi = values.length >>> 0; // define as unsigned int
+  let i = 0,
+      lines = '';
+  while (i < maxi) { // use "while" loop instead "for" loop, for better performance
+    lines += `${i == 0 ? '' : separator}${mapper(values[i])}`;
+    i++;
+  }
+  return lines;
 }

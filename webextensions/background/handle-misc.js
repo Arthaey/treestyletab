@@ -8,6 +8,7 @@
 import {
   log as internalLogger,
   wait,
+  mapAndFilterUniq,
   configs
 } from '/common/common.js';
 
@@ -27,6 +28,7 @@ import * as Background from './background.js';
 import * as TabsGroup from './tabs-group.js';
 import * as Tree from './tree.js';
 import * as Commands from './commands.js';
+import * as Migration from './migration.js';
 
 function log(...args) {
   internalLogger('background/handle-misc', ...args);
@@ -336,12 +338,16 @@ function onMessage(message, sender) {
 
     case Constants.kCOMMAND_NOTIFY_PERMISSIONS_GRANTED:
       return (async () => {
-        if (JSON.stringify(message.permissions) == JSON.stringify(Permissions.ALL_URLS)) {
+        const grantedPermission = JSON.stringify(message.permissions);
+        if (grantedPermission == JSON.stringify(Permissions.ALL_URLS)) {
           const tabs = await browser.tabs.query({}).catch(ApiTabs.createErrorHandler());
           await Tab.waitUntilTracked(tabs.map(tab => tab.id));
           for (const tab of tabs) {
             Background.tryStartHandleAccelKeyOnTab(Tab.get(tab.id));
           }
+        }
+        else if (grantedPermission == JSON.stringify(Permissions.BOOKMARKS)) {
+          Migration.migrateBookmarkUrls();
         }
       })();
 
@@ -650,8 +656,10 @@ function onMessageExternal(message, sender) {
     case TSTAPI.kGRANT_TO_REMOVE_TABS:
       return (async () => {
         const tabs = await TSTAPI.getTargetTabs(message, sender);
-        const grantedRemovingTabIds = configs.grantedRemovingTabIds.concat(Array.from(tabs).filter(TabsStore.ensureLivingTab).map(tab => tab.id));
-        configs.grantedRemovingTabIds = Array.from(new Set(grantedRemovingTabIds));
+        configs.grantedRemovingTabIds = mapAndFilterUniq(configs.grantedRemovingTabIds.concat(tabs), tab => {
+          tab = TabsStore.ensureLivingTab(tab);
+          return tab && tab.id || undefined;
+        });
         return true;
       })();
 

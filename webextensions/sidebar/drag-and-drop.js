@@ -30,6 +30,7 @@ import RichConfirm from '/extlib/RichConfirm.js';
 import {
   log as internalLogger,
   wait,
+  mapAndFilter,
   configs
 } from '/common/common.js';
 import * as Constants from '/common/constants.js';
@@ -52,6 +53,7 @@ function log(...args) {
 const kTREE_DROP_TYPE   = 'application/x-treestyletab-tree';
 const kTYPE_X_MOZ_URL   = 'text/x-moz-url';
 const kTYPE_URI_LIST    = 'text/uri-list';
+const kTYPE_MOZ_TEXT_INTERNAL = 'text/x-moz-text-internal';
 const kBOOKMARK_FOLDER  = 'x-moz-place:';
 
 const kDROP_BEFORE  = 'before';
@@ -215,8 +217,8 @@ function getDropAction(event) {
     const dragData = info.dragData;
     if (dragData && dragData.instanceId != mInstanceId)
       return [];
-    const tabs     = dragData && dragData.tabs;
-    return tabs && tabs.map(tab => tab && Tab.get(tab.id) || tab).filter(tab => !!tab) || [];
+    const tabIds = dragData && dragData.tabs;
+    return !tabIds ? [] : mapAndFilter(tabIds, id => Tab.get(id) || undefined);
   });
   info.defineGetter('draggedTabIds', () => {
     return info.draggedTabs.map(tab => tab.id);
@@ -524,6 +526,7 @@ function retrieveURIsFromDragEvent(event) {
   const types = [
     kTYPE_URI_LIST,
     kTYPE_X_MOZ_URL,
+    kTYPE_MOZ_TEXT_INTERNAL,
     'text/plain'
   ];
   let urls = [];
@@ -535,11 +538,11 @@ function retrieveURIsFromDragEvent(event) {
       break;
   }
   log(' => retrieved: ', urls);
-  urls = urls.filter(uRI =>
-    uRI &&
-      uRI.length &&
-      uRI.indexOf(kBOOKMARK_FOLDER) == 0 ||
-      !/^\s*(javascript|data):/.test(uRI)
+  urls = urls.filter(uri =>
+    uri &&
+      uri.length &&
+      uri.indexOf(kBOOKMARK_FOLDER) == 0 ||
+      !/^\s*(javascript|data):/.test(uri)
   );
   log('  => filtered: ', urls);
 
@@ -570,6 +573,13 @@ function retrieveURIsFromData(data, type) {
         .filter((_line, index) => {
           return index % 2 == 0;
         });
+
+    case kTYPE_MOZ_TEXT_INTERNAL:
+      return data
+        .replace(/\r/g, '\n')
+        .replace(/\n\n+/g, '\n')
+        .trim()
+        .split('\n');
 
     case 'text/plain':
       return data
@@ -1008,6 +1018,7 @@ function onDrop(event) {
   }
 
   const dropActionInfo = getDropAction(event);
+  log('onDrop ', dropActionInfo, event.dataTransfer);
 
   if (!dropActionInfo.canDrop) {
     log('undroppable');
@@ -1039,6 +1050,36 @@ function onDrop(event) {
       destinationWindowId: TabsStore.getWindow(),
       duplicate:           !fromOtherProfile && dt.dropEffect == 'copy',
       import:              fromOtherProfile
+    });
+    return;
+  }
+
+  if (dt.types.includes(kTYPE_MOZ_TEXT_INTERNAL) &&
+      configs.guessDraggedNativeTabs) {
+    log('there are dragged native tabs');
+    const url = dt.getData(kTYPE_MOZ_TEXT_INTERNAL);
+    browser.tabs.query({ url }).then(tabs => {
+      if (!tabs.length) {
+        log('=> from other profile');
+        handleDroppedNonTabItems(event, dropActionInfo);
+        return;
+      }
+      log('=> possible dragged tabs: ', tabs);
+      tabs = tabs.sort((a, b) => b.lastAccessed - a.lastAccessed);
+      const recentTab = tabs[0];
+      BackgroundConnection.sendMessage({
+        type:                Constants.kCOMMAND_PERFORM_TABS_DRAG_DROP,
+        windowId:            recentTab.windowId,
+        tabs:                [recentTab],
+        structure:           [-1],
+        action:              dropActionInfo.action,
+        attachToId:          dropActionInfo.parent && dropActionInfo.parent.id,
+        insertBeforeId:      dropActionInfo.insertBefore && dropActionInfo.insertBefore.id,
+        insertAfterId:       dropActionInfo.insertAfter && dropActionInfo.insertAfter.id,
+        destinationWindowId: TabsStore.getWindow(),
+        duplicate:           dt.dropEffect == 'copy',
+        import:              false
+      });
     });
     return;
   }

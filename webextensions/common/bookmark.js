@@ -11,7 +11,8 @@ import {
   notify
 } from './common.js';
 import * as Permissions from './permissions.js';
-import * as ApiTabs from '/common/api-tabs.js';
+import * as ApiTabs from './api-tabs.js';
+import * as Constants from './constants.js';
 
 import MenuUI from '/extlib/MenuUI.js';
 import RichConfirm from '/extlib/RichConfirm.js';
@@ -165,16 +166,28 @@ export async function bookmarkTabs(tabs, options = {}) {
     }
   }
 
+  const minLevel = Math.min(...tabs.map(tab => parseInt(tab.$TST.getAttribute(Constants.kLEVEL) || '0')));
   const folder = await browser.bookmarks.create(folderParams).catch(ApiTabs.createErrorHandler());
   for (let i = 0, maxi = tabs.length; i < maxi; i++) {
     const tab = tabs[i];
+    let title = tab.title;
+    const level = parseInt(tab.$TST.getAttribute(Constants.kLEVEL) || '0') - minLevel;
+    let prefix = '';
+    for (let j = 0; j < level; j++) {
+      prefix += '>';
+    }
+    if (prefix)
+      title = `${prefix} ${title}`;
+    else
+      title = title.replace(/^>+ /, ''); // if the page title has marker-like prefix, we need to remove it.
     await browser.bookmarks.create({
       parentId: folder.id,
       index:    i,
-      title:    tab.title,
+      title,
       url:      tab.url
     }).catch(ApiTabs.createErrorSuppressor());
   }
+
   return folder;
 }
 

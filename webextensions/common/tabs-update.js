@@ -29,7 +29,8 @@
 import {
   log as internalLogger,
   dumpTab,
-  wait
+  wait,
+  mapAndFilter
 } from './common.js';
 
 import * as Constants from './constants.js';
@@ -403,7 +404,10 @@ export async function updateTabsHighlighted(highlightInfo) {
     ordered: false,
     '!id':   tabIds
   });
-  const highlightedTabs = tabIds.map(id => window.tabs.get(id)).filter(tab => tab && !tab.highlighted);
+  const highlightedTabs = mapAndFilter(tabIds, id => {
+    const tab = window.tabs.get(id);
+    return tab && !tab.highlighted && tab || undefined;
+  });
 
   //console.log(`updateTabsHighlighted: ${Date.now() - startAt}ms`);
 

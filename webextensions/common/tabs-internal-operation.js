@@ -10,6 +10,7 @@
 import {
   log as internalLogger,
   dumpTab,
+  mapAndFilter,
   configs
 } from './common.js';
 import * as Constants from './constants.js';
@@ -46,8 +47,8 @@ export async function activateTab(tab, options = {}) {
       const highlightedTabs = Tab.getHighlightedTabs(tab.windowId);
       if (highlightedTabs.some(highlightedTab => highlightedTab.id == tab.id)) {
         // switch active tab with highlighted state
-        const otherTabs = highlightedTabs.filter(highlightedTab => highlightedTab.id != tab.id);
-        tabs = tabs.concat(otherTabs.map(tab => tab.index));
+        tabs = tabs.concat(mapAndFilter(highlightedTabs,
+                                        highlightedTab => highlightedTab.id != tab.id && highlightedTab.index || undefined));
       }
     }
     if (tabs.length == 1)
@@ -68,17 +69,30 @@ export function removeTab(tab) {
 }
 
 export function removeTabs(tabs) {
-  tabs = tabs.filter(TabsStore.ensureLivingTab);
+  log('removeTabsInternally: ', () => tabs.map(dumpTab));
+  if (tabs.length == 0)
+    return;
+
+  const window = TabsStore.windows.get(tabs[0].windowId);
+  const tabIds = [];
+  tabs = tabs.filter(tab => {
+    if ((!window ||
+         !window.internalClosingTabs.has(tab.id)) &&
+        TabsStore.ensureLivingTab(tab)) {
+      tabIds.push(tab.id);
+      return true;
+    }
+    return false;
+  });
+  log(' => ', () => tabs.map(dumpTab));
   if (!tabs.length)
     return;
-  log('removeTabsInternally: ', tabs.map(dumpTab));
   if (SidebarConnection.isInitialized()) // in background
     SidebarConnection.sendMessage({
       type:     Constants.kCOMMAND_REMOVE_TABS_INTERNALLY,
       windowId: tabs[0].windowId,
-      tabIds:   tabs.map(tab => tab.id)
+      tabIds
     });
-  const window = TabsStore.windows.get(tabs[0].windowId);
   if (window) {
     for (const tab of tabs) {
       window.internalClosingTabs.add(tab.id);
@@ -88,7 +102,7 @@ export function removeTabs(tabs) {
   }
   if (!SidebarConnection.isInitialized()) // in sidebar
     return;
-  return browser.tabs.remove(tabs.map(tab => tab.id)).catch(ApiTabs.createErrorHandler(ApiTabs.handleMissingTabError));
+  return browser.tabs.remove(tabIds).catch(ApiTabs.createErrorHandler(ApiTabs.handleMissingTabError));
 }
 
 export function setTabActive(tab) {

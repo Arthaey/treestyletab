@@ -32,6 +32,8 @@ import {
   log as internalLogger,
   wait,
   dumpTab,
+  mapAndFilter,
+  countMatched,
   configs
 } from '/common/common.js';
 import * as Constants from '/common/constants.js';
@@ -460,7 +462,7 @@ async function handleDefaultMouseUpOnTab(lastMousedown, tab) {
         if (confirmed)
           BackgroundConnection.sendMessage({
             type:   Constants.kCOMMAND_REMOVE_TABS_INTERNALLY,
-            tabIds: [tab.id]
+            tabIds: tabs.map(tab => tab.id)
           });
       });
   }
@@ -502,7 +504,7 @@ async function handleDefaultMouseUpOnTab(lastMousedown, tab) {
           return;
         BackgroundConnection.sendMessage({
           type:   Constants.kCOMMAND_REMOVE_TABS_INTERNALLY,
-          tabIds: multiselected ? tabsToBeClosed.map(tab => tab.id) : [tab.id]
+          tabIds: tabsToBeClosed.map(tab => tab.id)
         });
       });
   }
@@ -557,9 +559,8 @@ function updateMultiselectionByTabClick(tab, event) {
       }
 
       // for better performance, we should not call browser.tabs.update() for each tab.
-      const indices = Array.from(highlightedTabIds)
-        .filter(id => id != activeTab.id)
-        .map(id => Tab.get(id).index);
+      const indices = mapAndFilter(highlightedTabIds,
+                                   id => id != activeTab.id && Tab.get(id).index || undefined);
       if (highlightedTabIds.has(activeTab.id))
         indices.unshift(activeTab.index);
       browser.tabs.highlight({
@@ -592,7 +593,7 @@ function updateMultiselectionByTabClick(tab, event) {
       if (tab == activeTab &&
           tab.$TST.subtreeCollapsed &&
           activeTabDescendants.length > 0) {
-        const highlightedCount  = activeTabDescendants.filter(tab => tab.highlighted).length;
+        const highlightedCount  = countMatched(activeTabDescendants, tab => tab.highlighted);
         const partiallySelected = highlightedCount != 0 && highlightedCount != activeTabDescendants.length;
         toBeHighlighted = partiallySelected || !activeTabDescendants[0].highlighted;
         log(' => ', toBeHighlighted, { partiallySelected });
@@ -629,9 +630,8 @@ function updateMultiselectionByTabClick(tab, event) {
       }
 
       // for better performance, we should not call browser.tabs.update() for each tab.
-      const indices = Array.from(highlightedTabIds)
-        .filter(id => id != activeTab.id)
-        .map(id => Tab.get(id).index);
+      const indices = mapAndFilter(highlightedTabIds,
+                                   id => id != activeTab.id && Tab.get(id).index || undefined);
       if (highlightedTabIds.has(activeTab.id))
         indices.unshift(activeTab.index);
       browser.tabs.highlight({

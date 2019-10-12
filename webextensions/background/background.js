@@ -97,6 +97,7 @@ export async function init() {
   EventListenerManager.debug = configs.debug;
 
   Migration.migrateConfigs();
+  Migration.migrateBookmarkUrls();
   configs.grantedRemovingTabIds = []; // clear!
   MetricsData.add('init: Migration.migrateConfigs');
 
@@ -447,9 +448,17 @@ async function updateSubtreeCollapsed(tab) {
 }
 
 export async function confirmToCloseTabs(tabs, options = {}) {
-  tabs = tabs.filter(tab => !configs.grantedRemovingTabIds.includes(tab.id));
-  const tabIds = tabs.map(tab => tab.id);
-  const count = tabIds.length;
+  const grantedIds = new Set(configs.grantedRemovingTabIds);
+  let count = 0;
+  const tabIds = [];
+  tabs = tabs.filter(tab => {
+    if (!grantedIds.has(tab.id)) {
+      count++;
+      tabIds.push(tab.id);
+      return true;
+    }
+    return false;
+  });
   log('confirmToCloseTabs ', { tabIds, count, options });
   if (count <= 1 ||
       !configs.warnOnCloseTabs ||

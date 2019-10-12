@@ -9,6 +9,7 @@ import {
   log as internalLogger,
   dumpTab,
   wait,
+  mapAndFilter,
   configs
 } from '/common/common.js';
 import * as Constants from '/common/constants.js';
@@ -49,7 +50,7 @@ export async function restoreWindowFromEffectiveWindowCache(windowId, options = 
   cancelReservedCacheTree(windowId); // prevent to break cache before loading
   const tabs = options.tabs || await browser.tabs.query({ windowId }).catch(ApiTabs.createErrorHandler());
   if (configs.debug)
-    log(`restoreWindowFromEffectiveWindowCache for ${windowId} tabs: `, tabs.map(dumpTab));
+    log(`restoreWindowFromEffectiveWindowCache for ${windowId} tabs: `, () => tabs.map(dumpTab));
   const actualSignature = getWindowSignature(tabs);
   let cache = options.caches && options.caches.get(owner.id) || await MetricsData.addAsync('restoreWindowFromEffectiveWindowCache: window cache', getWindowCache(owner, Constants.kWINDOW_STATE_CACHED_TABS));
   if (!cache) {
@@ -195,7 +196,7 @@ async function fixupTabsRestoredFromCache(tabs, permanentStates, cachedTabs) {
   MetricsData.add('fixupTabsRestoredFromCache: start');
   if (tabs.length != cachedTabs.length)
     throw new Error(`fixupTabsRestoredFromCache: Mismatched number of tabs restored from cache, tabs=${tabs.length}, cachedTabs=${cachedTabs.length}`);
-  log('fixupTabsRestoredFromCache start ', { tabs: tabs.map(dumpTab), cachedTabs });
+  log('fixupTabsRestoredFromCache start ', () => ({ tabs: tabs.map(dumpTab), cachedTabs }));
   const idMap = new Map();
   // step 1: build a map from old id to new id
   tabs = tabs.map((tab, index) => {
@@ -221,19 +222,21 @@ async function fixupTabsRestoredFromCache(tabs, permanentStates, cachedTabs) {
 
 function fixupTabRestoredFromCache(tab, permanentStates, cachedTab, idMap) {
   tab.$TST.clear();
-  tab.$TST.states = new Set([...cachedTab.$TST.states, ...permanentStates]);
+  const tabStates = new Set([...cachedTab.$TST.states, ...permanentStates]);
   for (const state of Constants.kTAB_TEMPORARY_STATES) {
-    tab.$TST.states.delete(state);
+    tabStates.delete(state);
   }
+  tab.$TST.states = tabStates;
   tab.$TST.attributes = cachedTab.$TST.attributes;
 
   log('fixupTabRestoredFromCache children: ', cachedTab.$TST.childIds);
-  const childTabs = cachedTab.$TST.childIds
-    .map(oldId => idMap.get(oldId))
-    .filter(tab => !!tab);
-  tab.$TST.children = childTabs;
-  if (childTabs.length > 0)
-    tab.$TST.setAttribute(Constants.kCHILDREN, `|${childTabs.map(tab => tab.id).join('|')}|`);
+  const childIds = mapAndFilter(cachedTab.$TST.childIds, oldId => {
+    const tab = idMap.get(oldId);
+    return tab && tab.id || undefined;
+  });
+  tab.$TST.children = childIds;
+  if (childIds.length > 0)
+    tab.$TST.setAttribute(Constants.kCHILDREN, `|${childIds.join('|')}|`);
   else
     tab.$TST.removeAttribute(Constants.kCHILDREN);
   log('fixupTabRestoredFromCache children: => ', tab.$TST.childIds);

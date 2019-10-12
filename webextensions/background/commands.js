@@ -10,6 +10,7 @@ import {
   dumpTab,
   notify,
   wait,
+  countMatched,
   configs
 } from '/common/common.js';
 import * as Constants from '/common/constants.js';
@@ -24,6 +25,7 @@ import Tab from '/common/Tab.js';
 
 import * as TabsOpen from './tabs-open.js';
 import * as TabsMove from './tabs-move.js';
+import * as TabsGroup from './tabs-group.js';
 import * as Tree from './tree.js';
 
 import EventListenerManager from '/extlib/EventListenerManager.js';
@@ -127,7 +129,8 @@ export async function bookmarkTree(root, options = {}) {
     return SidebarConnection.sendMessage({
       type:     Constants.kCOMMAND_BOOKMARK_TABS_WITH_DIALOG,
       windowId: tab.windowId,
-      tabIds:   tabs.map(tab => tab.id)
+      tabIds:   tabs.map(tab => tab.id),
+      options
     });
   }
 
@@ -253,11 +256,11 @@ export async function outdent(tab, options = {}) {
 }
 
 // drag and drop helper
-export async function performTabsDragDrop(params = {}) {
+async function performTabsDragDrop(params = {}) {
   const windowId = params.windowId || TabsStore.getWindow();
   const destinationWindowId = params.destinationWindowId || windowId;
 
-  log('performTabsDragDrop ', {
+  log('performTabsDragDrop ', () => ({
     tabs:                params.tabs.map(dumpTab),
     attachTo:            dumpTab(params.attachTo),
     insertBefore:        dumpTab(params.insertBefore),
@@ -265,7 +268,7 @@ export async function performTabsDragDrop(params = {}) {
     windowId:            params.windowId,
     destinationWindowId: params.destinationWindowId,
     action:              params.action
-  });
+  }));
 
   const movedTabs = await moveTabsWithStructure(params.tabs, Object.assign({}, params, {
     windowId, destinationWindowId,
@@ -283,7 +286,7 @@ export async function performTabsDragDrop(params = {}) {
 
 // useful utility for general purpose
 export async function moveTabsWithStructure(tabs, params = {}) {
-  log('moveTabsWithStructure ', tabs.map(dumpTab));
+  log('moveTabsWithStructure ', () => tabs.map(dumpTab));
 
   let movedTabs = tabs.filter(tab => !!tab);
   if (!movedTabs.length)
@@ -299,7 +302,7 @@ export async function moveTabsWithStructure(tabs, params = {}) {
         movedWholeTree.push(descendant);
     }
   }
-  log('=> movedTabs: ', movedTabs.map(dumpTab).join(' / '));
+  log('=> movedTabs: ', () => movedTabs.map(dumpTab).join(' / '));
 
   while (params.insertBefore &&
          movedWholeTree.includes(params.insertBefore)) {
@@ -394,7 +397,7 @@ export async function moveTabsWithStructure(tabs, params = {}) {
     });
   }
 
-  log('=> moving tabs ', movedTabs.map(dumpTab));
+  log('=> moving tabs ', () => movedTabs.map(dumpTab));
   if (params.insertBefore)
     await TabsMove.moveTabsBefore(
       movedTabs,
@@ -441,7 +444,7 @@ export async function moveTabsWithStructure(tabs, params = {}) {
 }
 
 async function attachTabsWithStructure(tabs, parent, options = {}) {
-  log('attachTabsWithStructure: start ', tabs.map(dumpTab), dumpTab(parent));
+  log('attachTabsWithStructure: start ', () => [tabs.map(dumpTab), dumpTab(parent)]);
   if (parent &&
       !options.insertBefore &&
       !options.insertAfter) {
@@ -485,7 +488,7 @@ async function attachTabsWithStructure(tabs, parent, options = {}) {
 }
 
 function detachTabsWithStructure(tabs, options = {}) {
-  log('detachTabsWithStructure: start ', tabs.map(dumpTab));
+  log('detachTabsWithStructure: start ', () => tabs.map(dumpTab));
   for (const tab of tabs) {
     Tree.detachTab(tab, options);
     Tree.collapseExpandTabAndSubtree(tab, Object.assign({}, options, {
@@ -620,10 +623,17 @@ export async function moveTabsToStart(movedTabs) {
     return;
   const tab       = movedTabs[0];
   const allTabs   = tab.pinned ? Tab.getPinnedTabs(tab.windowId) : Tab.getUnpinnedTabs(tab.windowId);
-  const otherTabs = allTabs.filter(tab => !movedTabs.includes(tab));
-  if (otherTabs.length > 0)
+  const movedTabsSet = new Set(movedTabs);
+  let firstOtherTab;
+  for (const tab of allTabs) {
+    if (movedTabsSet.has(tab))
+      continue;
+    firstOtherTab = tab;
+    break;
+  }
+  if (firstOtherTab)
     await moveTabsWithStructure(movedTabs, {
-      insertBefore: otherTabs[0],
+      insertBefore: firstOtherTab,
       broadcast:    true
     });
 }
@@ -638,10 +648,18 @@ export async function moveTabsToEnd(movedTabs) {
     return;
   const tab       = movedTabs[0];
   const allTabs   = tab.pinned ? Tab.getPinnedTabs(tab.windowId) : Tab.getUnpinnedTabs(tab.windowId);
-  const otherTabs = allTabs.filter(tab => !movedTabs.includes(tab));
-  if (otherTabs.length > 0)
+  const movedTabsSet = new Set(movedTabs);
+  let lastOtherTabs;
+  for (let i = allTabs.length - 1; i > -1; i--) {
+    const tab = allTabs[i];
+    if (movedTabsSet.has(tab))
+      continue;
+    lastOtherTabs = tab;
+    break;
+  }
+  if (lastOtherTabs)
     await moveTabsWithStructure(movedTabs, {
-      insertAfter: otherTabs[otherTabs.length-1],
+      insertAfter: lastOtherTabs,
       broadcast:   true
     });
 }
@@ -767,3 +785,75 @@ SidebarConnection.onMessage.addListener(async (windowId, message) => {
     }; break;
   }
 });
+
+
+const DESCENDANT_MATCHER = /^(>+) /;
+
+export async function openAllBookmarksWithStructure(id) {
+  let item = await browser.bookmarks.get(id);
+  if (Array.isArray(item))
+    item = item[0];
+  if (!item)
+    return;
+
+  if (item.type != 'folder') {
+    item = await browser.bookmarks.get(item.parentId);
+    if (Array.isArray(item))
+      item = item[0];
+  }
+
+  let indexToBeActive = 0;
+  const items = await browser.bookmarks.getChildren(item.id);
+  if (countMatched(items, item => !DESCENDANT_MATCHER.test(item.title)) > 1) {
+    for (const item of items) {
+      item.title = DESCENDANT_MATCHER.test(item.title) ?
+        item.title.replace(DESCENDANT_MATCHER, '>$1 ') :
+        `> ${item.title}`;
+    }
+    items.unshift({
+      title: '',
+      url:   TabsGroup.makeGroupTabURI({
+        title:               item.title,
+        temporaryAggressive: true
+      })
+    });
+    indexToBeActive = 1;
+  }
+
+  const lastItemIndicesWithLevel = new Map();
+  let lastMaxLevel = 0;
+  const structure = items.reduce((result, item, index) => {
+    let level = 0;
+    if (lastItemIndicesWithLevel.size > 0 &&
+        item.title.match(DESCENDANT_MATCHER)) {
+      level = RegExp.$1.length;
+      if (level - lastMaxLevel > 1) {
+        level = lastMaxLevel + 1;
+      }
+      else {
+        while (lastMaxLevel > level) {
+          lastItemIndicesWithLevel.delete(lastMaxLevel--);
+        }
+      }
+      lastItemIndicesWithLevel.set(level, index);
+      lastMaxLevel = level;
+      result.push(lastItemIndicesWithLevel.get(level - 1) - lastItemIndicesWithLevel.get(0));
+    }
+    else {
+      result.push(-1);
+      lastItemIndicesWithLevel.clear();
+      lastItemIndicesWithLevel.set(0, index);
+    }
+    return result;
+  }, []);
+
+  const tabs = await TabsOpen.openURIsInTabs(items.map(item => item.url), {
+    windowId:     TabsStore.getWindow() || (await browser.windows.getCurrent()).id,
+    isOrphan:     true,
+    inBackground: true
+  });
+  if (tabs.length == structure.length)
+    Tree.applyTreeStructureToTabs(tabs, structure);
+  if (tabs.length > indexToBeActive)
+    TabsInternalOperation.activateTab(tabs[indexToBeActive]);
+}

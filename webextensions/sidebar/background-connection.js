@@ -7,6 +7,7 @@
 
 import {
   log as internalLogger,
+  mapAndFilterUniq,
   configs
 } from '/common/common.js';
 import * as Constants from '/common/constants.js';
@@ -66,8 +67,11 @@ export function sendMessage(message) {
       const messages = mReservedMessages;
       mReservedMessages = [];
       mConnectionPort.postMessage(messages);
-      if (configs.debug)
-        log(`${messages.length} messages sent (${Array.from(new Set(messages.map(message => message.type))).join(', ')}):`, messages);
+      if (configs.debug) {
+        const types = mapAndFilterUniq(messages,
+                                       message => message.type || undefined).join(', ');
+        log(`${messages.length} messages sent (${types}):`, messages);
+      }
     };
     // Because sidebar is always visible, we may not need to avoid using
     // window.requestAnimationFrame. I just use a timer instead just for

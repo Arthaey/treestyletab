@@ -8,6 +8,7 @@
 import {
   log as internalLogger,
   dumpTab,
+  toLines,
   configs
 } from '/common/common.js';
 
@@ -92,7 +93,8 @@ export async function loadTreeStructure(windows, restoredFromCacheResults) {
         uniqueIds = uniqueIds.map(id => id.id);
         let tabsOffset;
         if (structure[0].id) {
-          tabsOffset = uniqueIds.join('\n').indexOf(structure.map(item => item.id).join('\n'));
+          const structureSignature = toLines(structure, item => item.id);
+          tabsOffset = uniqueIds.join('\n').indexOf(structureSignature);
           windowStateCompletelyApplied = tabsOffset > -1;
         }
         else {
@@ -169,7 +171,7 @@ reserveToAttachTabFromRestoredInfo.promisedDone = null;
 
 
 async function attachTabFromRestoredInfo(tab, options = {}) {
-  log('attachTabFromRestoredInfo ', tab);
+  log('attachTabFromRestoredInfo ', tab, options);
   let uniqueId, insertBefore, insertAfter, ancestors, children, states, collapsed /* for backward compatibility */;
   // eslint-disable-next-line prefer-const
   [uniqueId, insertBefore, insertAfter, ancestors, children, states, collapsed] = await Promise.all([
@@ -199,12 +201,12 @@ async function attachTabFromRestoredInfo(tab, options = {}) {
   insertAfter  = Tab.getByUniqueId(insertAfter);
   ancestors    = ancestors.map(Tab.getByUniqueId);
   children     = children.map(Tab.getByUniqueId);
-  log(' => references: ', {
+  log(' => references: ', () => ({
     insertBefore: dumpTab(insertBefore),
     insertAfter:  dumpTab(insertAfter),
     ancestors:    ancestors.map(dumpTab).join(', '),
     children:     children.map(dumpTab).join(', ')
-  });
+  }));
 
   // clear wrong positioning information
   if (tab.pinned ||
@@ -273,6 +275,8 @@ async function attachTabFromRestoredInfo(tab, options = {}) {
     });
   }
   if (options.children && !options.bulk) {
+    let firstInTree = tab.$TST.firstChild || tab;
+    let lastInTree  = tab.$TST.lastDescendant || tab;
     for (const child of children) {
       if (!child)
         continue;
@@ -280,8 +284,13 @@ async function attachTabFromRestoredInfo(tab, options = {}) {
         dontExpand:  !child.active,
         forceExpand: active,
         insertAt:    Constants.kINSERT_NEAREST,
+        dontMove:    child.index >= firstInTree.index && child.index <= lastInTree.index + 1,
         broadcast:   true
       });
+      if (child.index < firstInTree.index)
+        firstInTree = child;
+      else if (child.index > lastInTree.index)
+        lastInTree = child;
     }
   }
 

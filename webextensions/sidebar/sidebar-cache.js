@@ -9,6 +9,8 @@ import {
   log as internalLogger,
   nextFrame,
   wait,
+  countMatched,
+  toLines,
   configs
 } from '/common/common.js';
 import * as Constants from '/common/constants.js';
@@ -174,7 +176,8 @@ export async function getEffectiveWindowCache(options = {}) {
     MetricsData.add('getEffectiveWindowCache: validity check: actual signature failed.');
   }
   else {
-    cache.offset          = actualSignature.replace(cachedSignature, '').trim().split('\n').filter(part => !!part).length;
+    cache.offset= countMatched(actualSignature.replace(cachedSignature, '').trim().split('\n'),
+                               part => part);
     cache.actualSignature = actualSignature;
     log('getEffectiveWindowCache: success ');
     MetricsData.add('getEffectiveWindowCache: validity check: actual signature passed.');
@@ -185,7 +188,8 @@ export async function getEffectiveWindowCache(options = {}) {
 
 function getWindowSignature(tabs) {
   const tabIds = tabs.map(tab => tab.id);
-  return tabs.map(tab => `${tab.openerTabId ? tabIds.indexOf(tab.openerTabId) : -1 },${tab.cookieStoreId},${tab.incognito},${tab.pinned}`).join('\n');
+  return toLines(tabs,
+                 tab => `${tab.openerTabId ? tabIds.indexOf(tab.openerTabId) : -1 },${tab.cookieStoreId},${tab.incognito},${tab.pinned}`);
 }
 
 function trimSignature(signature, ignoreCount) {
@@ -230,7 +234,8 @@ function signatureFromTabsCache(cachedTabs) {
       pinned:        pinnedMatcher.test(classes)
     };
   });
-  return tabs.map(tab => `${tab.parentId ? tabIds.indexOf(tab.parentId) : -1 },${tab.cookieStoreId},${tab.incognito},${tab.pinned}`).join('\n');
+  return toLines(tabs,
+                 tab => `${tab.parentId ? tabIds.indexOf(tab.parentId) : -1 },${tab.cookieStoreId},${tab.incognito},${tab.pinned}`);
 }
 
 

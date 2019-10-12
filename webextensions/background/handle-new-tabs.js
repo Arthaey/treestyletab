@@ -42,7 +42,8 @@ Tab.onCreating.addListener((tab, info = {}) => {
   }
   else {
     if (!info.maybeOrphan &&
-        possibleOpenerTab) {
+        possibleOpenerTab &&
+        !info.restored) {
       let autoAttachBehavior = configs.autoAttachOnNewTabCommand;
       let dontMove           = false;
       if (tab.$TST.nextTab &&
@@ -144,7 +145,7 @@ async function handleNewTabFromActiveTab(tab, params = {}) {
   // by the "multiple tab opened in XXX msec" feature.
   const window = TabsStore.windows.get(tab.windowId);
   window.openedNewTabs.delete(tab.id);
-  await TabsOpen.openNewTab({
+  await TabsOpen.openURIInTab(params.url || null, {
     windowId: activeTab.windowId,
     parent,
     insertBefore: tab,
@@ -221,6 +222,7 @@ Tab.onUpdated.addListener((tab, changeInfo) => {
         if (openerTabSite && newTabSite && openerTabSite[1] == newTabSite[1]) {
           log('behave as a tab opened from same site (delayed)');
           handleNewTabFromActiveTab(tab, {
+            url:                       tab.url,
             activeTab:                 possibleOpenerTab,
             autoAttachBehavior:        configs.autoAttachSameSiteOrphan,
             inheritContextualIdentity: configs.inheritContextualIdentityToSameSiteOrphan
@@ -239,12 +241,12 @@ Tab.onAttached.addListener(async (tab, info = {}) => {
 
   log('Tabs.onAttached ', dumpTab(tab), info);
 
-  log('descendants of attached tab: ', info.descendants.map(dumpTab));
+  log('descendants of attached tab: ', () => info.descendants.map(dumpTab));
   const movedTabs = await Tree.moveTabs(info.descendants, {
     destinationWindowId: tab.windowId,
     insertAfter:         tab
   });
-  log('moved descendants: ', movedTabs.map(dumpTab));
+  log('moved descendants: ', () => movedTabs.map(dumpTab));
   for (const movedTab of movedTabs) {
     Tree.attachTabTo(movedTab, tab, {
       broadcast: true,

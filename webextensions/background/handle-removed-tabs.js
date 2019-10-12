@@ -9,6 +9,8 @@ import {
   log as internalLogger,
   dumpTab,
   wait,
+  mapAndFilterUniq,
+  countMatched,
   configs
 } from '/common/common.js';
 
@@ -60,7 +62,8 @@ Tab.onRemoving.addListener(async (tab, removeInfo = {}) => {
 
   if (closeParentBehavior == Constants.kCLOSE_PARENT_BEHAVIOR_REPLACE_WITH_GROUP_TAB &&
       tab.$TST.childIds.length > 1 &&
-      tab.$TST.children.filter(child => !child.$TST.states.has(Constants.kTAB_STATE_TO_BE_REMOVED)).length > 1) {
+      countMatched(tab.$TST.children,
+                   tab => !tab.$TST.states.has(Constants.kTAB_STATE_TO_BE_REMOVED)) > 1) {
     log('trying to replace the closing tab with a new group tab');
     const firstChild = tab.$TST.firstChild;
     const uri = TabsGroup.makeGroupTabURI({
@@ -93,10 +96,13 @@ Tab.onRemoving.addListener(async (tab, removeInfo = {}) => {
     broadcast: true
   });
   //reserveCloseRelatedTabs(toBeClosedTabs);
-  Tree.detachTab(tab, {
-    dontUpdateIndent: true,
-    broadcast:        true
-  });
+  // We should skip needless operation if it is a bulk tab close
+  const window = TabsStore.windows.get(tab.windowId);
+  if (!window.internalClosingTabs.has(tab.$TST.parentId))
+    Tree.detachTab(tab, {
+      dontUpdateIndent: true,
+      broadcast:        true
+    });
 });
 
 async function tryGrantCloseTab(tab, closeParentBehavior) {
@@ -122,17 +128,22 @@ async function tryGrantCloseTab(tab, closeParentBehavior) {
 
   let shouldRestoreCount;
   self.promisedGrantedToCloseTabs = wait(10).then(async () => {
-    self.closingTabIds = Array.from(new Set(self.closingTabIds));
-    self.closingDescendantTabIds = self.closingDescendantTabIds.filter(id => !self.closingTabIds.includes(id))
-    self.closingDescendantTabIds = Array.from(new Set(self.closingDescendantTabIds));
-    let allClosingTabs = [tab].concat(self.closingDescendantTabIds.map(id => Tab.get(id)));
-    allClosingTabs = Array.from(new Set(allClosingTabs));
+    const closingTabIds = new Set(self.closingTabIds);
+    let allClosingTabs = new Set();
+    allClosingTabs.add(tab);
+    self.closingTabIds = Array.from(closingTabIds);
+    self.closingDescendantTabIds = mapAndFilterUniq(self.closingDescendantTabIds, id => {
+      if (closingTabIds.has(id))
+        return undefined;
+      allClosingTabs.add(Tab.get(id));
+      return id;
+    });
+    allClosingTabs = Array.from(allClosingTabs);
     shouldRestoreCount = self.closingTabIds.length;
-    const restorableClosingTabs = allClosingTabs.filter(tab => (
-      tab.url != 'about:blank' &&
-      tab.url != configs.guessNewOrphanTabAsOpenedByNewTabCommandUrl
-    ));
-    if (restorableClosingTabs.length > 0) {
+    const restorableClosingTabsCount = countMatched(allClosingTabs,
+                                                    tab => tab.url != 'about:blank' &&
+                                                           tab.url != configs.guessNewOrphanTabAsOpenedByNewTabCommandUrl);
+    if (restorableClosingTabsCount > 0) {
       log('tryGrantClose: show confirmation for ', allClosingTabs);
       return Background.confirmToCloseTabs(allClosingTabs.map(tab => tab.$TST.sanitized), {
         windowId: tab.windowId
@@ -191,9 +202,7 @@ async function closeChildTabs(parent) {
 
   //markAsClosedSet([parent].concat(tabs));
   // close bottom to top!
-  await Promise.all(tabs.reverse().map(tab => {
-    return TabsInternalOperation.removeTab(tab);
-  }));
+  await TabsInternalOperation.removeTabs(tabs.reverse());
   //fireTabSubtreeClosedEvent(parent, tabs);
 }
 

@@ -32,6 +32,7 @@ import {
   log as internalLogger,
   wait,
   dumpTab,
+  mapAndFilter,
   configs
 } from '/common/common.js';
 import * as Constants from '/common/constants.js';
@@ -99,7 +100,7 @@ export async function attachTabTo(child, parent, options = {}) {
     log('=> could not attach tab to a parent in different window');
     return false;
   }
-  const ancestors = [parent].concat(child.$TST.ancestors);
+  const ancestors = [parent].concat(parent.$TST.ancestors);
   if (ancestors.includes(child)) {
     log('=> canceled for recursive request');
     return false;
@@ -224,6 +225,7 @@ export function getReferenceTabsForNewChild(child, parent, options = {}) {
       case Constants.kINSERT_NEAREST: {
         const allTabs = Tab.getOtherTabs(parent.windowId, options.ignoreTabs);
         const index = allTabs.indexOf(child);
+        log('  insertAt=kINSERT_NEAREST ', { allTabs, index });
         if (index < allTabs.indexOf(firstChild)) {
           insertBefore = firstChild;
           insertAfter  = parent;
@@ -374,7 +376,7 @@ export function detachAllChildren(tab, options = {}) {
   const children = options.children ? options.children.map(TabsStore.ensureLivingTab) : tab.$TST.children;
   if (!children.length)
     return;
-  log(' => children to be detached: ', children.map(dumpTab));
+  log(' => children to be detached: ', () => children.map(dumpTab));
 
   if (!('behavior' in options))
     options.behavior = Constants.kCLOSE_PARENT_BEHAVIOR_SIMPLY_DETACH_ALL_CHILDREN;
@@ -943,7 +945,7 @@ export async function moveTabs(tabs, options = {}) {
   if (tabs.length == 0)
     return [];
 
-  log('moveTabs: ', tabs.map(dumpTab), options);
+  log('moveTabs: ', () => ({ tabs: tabs.map(dumpTab), options }));
 
   const windowId = parseInt(tabs[0].windowId || TabsStore.getWindow());
 
@@ -1018,7 +1020,7 @@ export async function moveTabs(tabs, options = {}) {
                 return null;
               }
             })).then(tabs => {
-              log(`ids from API responses are resolved in ${Date.now() - startTime}msec: `, tabs.map(dumpTab));
+              log(`ids from API responses are resolved in ${Date.now() - startTime}msec: `, () => tabs.map(dumpTab));
               return tabs;
             });
             movedTabs = await promisedDuplicatedTabs;
@@ -1075,8 +1077,8 @@ export async function moveTabs(tabs, options = {}) {
       const startTime = Date.now();
       const maxDelay = configs.maximumAcceptableDelayForTabDuplication;
       while (Date.now() - startTime < maxDelay) {
-        newTabs = movedTabs.map(tab => Tab.get(TabIdFixer.fixTab(tab).id));
-        newTabs = newTabs.filter(tab => !!tab);
+        newTabs = mapAndFilter(movedTabs,
+                               tab => Tab.get(TabIdFixer.fixTab(tab).id) || undefined);
         if (mSlowDuplication)
           UserOperationBlocker.setProgress(Math.round(newTabs.length / tabs.length * 50) + 50, windowId);
         if (newTabs.length < tabs.length) {
@@ -1115,8 +1117,7 @@ export async function moveTabs(tabs, options = {}) {
   }
 
 
-  movedTabs = movedTabs.map(tab => Tab.get(tab.id));
-  movedTabs = movedTabs.filter(tab => !!tab);
+  movedTabs = mapAndFilter(movedTabs, tab => Tab.get(tab.id) || undefined);
   if (options.insertBefore) {
     await TabsMove.moveTabsBefore(
       movedTabs,
@@ -1136,8 +1137,16 @@ export async function moveTabs(tabs, options = {}) {
   }
   // Tabs can be removed while waiting, so we need to
   // refresh the array of tabs.
-  movedTabs = movedTabs.map(tab => Tab.get(tab.id));
-  movedTabs = movedTabs.filter(tab => !!tab);
+  movedTabs = mapAndFilter(movedTabs, tab => Tab.get(tab.id) || undefined);
+
+  if (isAcrossWindows) {
+    for (const tab of movedTabs) {
+      if (tab.$TST.parent ||
+          parseInt(tab.$TST.getAttribute(Constants.kLEVEL) || 0) == 0)
+        continue;
+      updateTabIndent(tab, 0);
+    }
+  }
 
   return movedTabs;
 }
@@ -1173,13 +1182,13 @@ export async function openNewWindowFromTabs(tabs, options = {}) {
   log('closing needless tabs');
   browser.windows.get(newWindow.id, { populate: true })
     .then(window => {
-      log('moved tabs: ', movedTabs.map(dumpTab));
-      const movedTabIds     = movedTabs.map(tab => tab.id);
-      const allTabsInWindow = window.tabs.map(tab => TabIdFixer.fixTab(tab));
-      const removeTabs      = allTabsInWindow
-        .filter(tab => !movedTabIds.includes(tab.id))
-        .map(tab => Tab.get(tab.id));
-      log('removing tabs: ', removeTabs.map(dumpTab));
+      const movedTabIds = new Set(movedTabs.map(tab => tab.id));
+      log('moved tabs: ', movedTabIds);
+      const removeTabs = mapAndFilter(window.tabs, tab => {
+        tab = TabIdFixer.fixTab(tab);
+        return !movedTabIds.has(tab.id) && Tab.get(tab.id) || undefined;
+      });
+      log('removing tabs: ', removeTabs);
       TabsInternalOperation.removeTabs(removeTabs);
       UserOperationBlocker.unblockIn(newWindow.id);
     })
@@ -1189,13 +1198,22 @@ export async function openNewWindowFromTabs(tabs, options = {}) {
 }
 
 
+/* "treeStructure" is an array of integers, meaning:
+  [A]     => -1 (parent is not in this tree)
+    [B]   => 0 (parent is 1st item in this tree)
+    [C]   => 0 (parent is 1st item in this tree)
+      [D] => 2 (parent is 2nd in this tree)
+  [E]     => -1 (parent is not in this tree, and this creates another tree)
+    [F]   => 0 (parent is 1st item in this another tree)
+  See also getTreeStructureFromTabs() in tree-behavior.js
+*/
 export async function applyTreeStructureToTabs(tabs, treeStructure, options = {}) {
   if (!tabs || !treeStructure)
     return;
 
   MetricsData.add('applyTreeStructureToTabs: start');
 
-  log('applyTreeStructureToTabs: ', tabs.map(dumpTab), treeStructure, options);
+  log('applyTreeStructureToTabs: ', () => ({ tabs: tabs.map(dumpTab), treeStructure, options }));
   tabs = tabs.slice(0, treeStructure.length);
   treeStructure = treeStructure.slice(0, tabs.length);
 

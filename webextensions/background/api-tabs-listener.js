@@ -31,6 +31,7 @@ import TabIdFixer from '/extlib/TabIdFixer.js';
 import {
   log as internalLogger,
   dumpTab,
+  toLines,
   configs
 } from '/common/common.js';
 import * as Constants from '/common/constants.js';
@@ -393,8 +394,21 @@ async function onNewTabTracked(tab, info) {
       forceApply: true
     });
 
-    // tabs can be removed and detached while waiting, so cache them here for `detectTabActionFromNewPosition()`.
-    const treeForActionDetection = Tree.snapshotForActionDetection(tab);
+    const duplicated = duplicatedInternally || uniqueId.duplicated;
+    const restored   = uniqueId.restored;
+    const skipFixupTree = !nextTab;
+
+    const maybeNeedToFixupTree = (
+      (info.mayBeReplacedWithContainer ||
+       (!duplicated &&
+        !restored &&
+        !skipFixupTree)) &&
+      !info.positionedBySelf
+    );
+    // Tabs can be removed and detached while waiting, so cache them here for `detectTabActionFromNewPosition()`.
+    // This operation takes too much time so it should be skipped if unnecessary.
+    // See also: https://github.com/piroor/treestyletab/issues/2278#issuecomment-521534290
+    const treeForActionDetection = maybeNeedToFixupTree ? Tree.snapshotForActionDetection(tab) : null;
 
     if (positionedBySelf)
       window.toBeOpenedTabsWithPositions--;
@@ -403,8 +417,6 @@ async function onNewTabTracked(tab, info) {
     if (duplicatedInternally)
       window.duplicatingTabsCount--;
 
-    const duplicated = duplicatedInternally || uniqueId.duplicated;
-    const restored   = uniqueId.restored;
     if (restored) {
       window.restoredCount = window.restoredCount || 0;
       window.restoredCount++;
@@ -489,7 +501,7 @@ async function onNewTabTracked(tab, info) {
       positionedBySelf,
       mayBeReplacedWithContainer,
       movedBySelfWhileCreation: moved,
-      skipFixupTree: !nextTab,
+      skipFixupTree,
       restored,
       duplicated,
       duplicatedInternally,
@@ -763,9 +775,8 @@ async function onMoved(tabId, moveInfo) {
         movedTab.reindexedBy = `tabs.onMoved (${movedTab.index})`;
         window.trackTab(movedTab);
         log('Tab nodes rearranged by tabs.onMoved listener:\n'+(!configs.debug ? '' :
-          Array.from(window.getOrderedTabs())
-            .map(tab => ' - '+tab.index+': '+tab.id+(tab.id == movedTab.id ? '[MOVED]' : ''))
-            .join('\n')),
+          toLines(Array.from(window.getOrderedTabs()),
+                  tab => ` - ${tab.index}: ${tab.id}${tab.id == movedTab.id ? '[MOVED]' : ''}`)),
             { moveInfo });
       }
       const onMovedResult = Tab.onMoved.dispatch(movedTab, extendedMoveInfo);

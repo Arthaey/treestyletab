@@ -11,6 +11,7 @@ import {
   log as internalLogger,
   dumpTab,
   wait,
+  mapAndFilter,
   configs
 } from '/common/common.js';
 
@@ -364,23 +365,19 @@ async function tryGroupNewTabs() {
   tryGroupNewTabs.running = true;
   try {
     // extract only pure new tabs
-    let tabs = tabReferences.map(tabReference => {
+    const tabs = mapAndFilter(tabReferences, tabReference => {
       const tab = Tab.get(tabReference.id);
       if (!tab)
-        return null;
+        return undefined;
       // We should check the config here, because to-be-grouped tabs should be
       // ignored by the handler for "autoAttachSameSiteOrphan" behavior.
       const shouldBeGrouped = tabReference.openerIsPinned ? configs.autoGroupNewTabsFromPinned : configs.autoGroupNewTabs;
       if (!shouldBeGrouped)
-        return null;
+        return undefined;
       if (tabReference.openerTabId)
         tab.openerTabId = parseInt(tabReference.openerTabId); // restore the opener information
-      return tab;
-    }).filter(tab => !!tab);
-    const uniqueIds = tabs.map(tab => tab.$TST.uniqueId);
-    tabs = tabs.filter((id, index) => {
-      const uniqueId = uniqueIds[index];
-      return !uniqueId.duplicated && !uniqueId.restored;
+      const uniqueId = tab.$TST.uniqueId;
+      return !uniqueId.duplicated && !uniqueId.restored && tab || undefined;
     });
     Tab.sort(tabs);
 
@@ -463,7 +460,7 @@ async function tryGroupNewTabsFromPinnedOpener(rootTabs) {
     if (!pinnedOpeners.includes(opener))
       pinnedOpeners.push(opener);
   }
-  log('pinnedOpeners ', pinnedOpeners.map(dumpTab));
+  log('pinnedOpeners ', () => pinnedOpeners.map(dumpTab));
 
   // Second, collect tabs opened from pinned openers including existing tabs
   // (which were left ungrouped in previous process).
@@ -498,7 +495,7 @@ async function tryGroupNewTabsFromPinnedOpener(rootTabs) {
   pinnedOpeners = pinnedOpeners.filter(opener => {
     return childrenOfPinnedTabs[opener.id].length > 1 || Tab.getGroupTabForOpener(opener);
   });
-  log(' => ', pinnedOpeners.map(dumpTab));
+  log(' => ', () => pinnedOpeners.map(dumpTab));
 
   // Move newly opened tabs to expected position before grouping!
   switch (configs.insertNewTabFromPinnedTabAt) {
@@ -535,7 +532,7 @@ async function tryGroupNewTabsFromPinnedOpener(rootTabs) {
   const newGroupTabs = new Map();
   for (const opener of pinnedOpeners) {
     const children = childrenOfPinnedTabs[opener.id].sort((a, b) => a.index - b.index);
-    log(`trying to group children of ${dumpTab(opener)}: `, children.map(dumpTab));
+    log(`trying to group children of ${dumpTab(opener)}: `, () => children.map(dumpTab));
     let parent = Tab.getGroupTabForOpener(opener);
     if (!parent) {
       const uri = TabsGroup.makeGroupTabURI({
