@@ -997,9 +997,7 @@ export async function getTargetTabs(message, sender) {
       message.tabId == '*' ||
       message.tabs == '*' ||
       message.tabIds == '*') {
-    const window = await browser.windows.getLastFocused({
-      windowTypes: ['normal']
-    }).catch(ApiTabs.createErrorHandler());
+    const window = await browser.windows.getLastFocused().catch(ApiTabs.createErrorHandler());
     return Tab.getAllTabs(window.id, { iterator: true });
   }
   if (message.tab || message.tabId)
