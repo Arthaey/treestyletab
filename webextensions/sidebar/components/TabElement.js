@@ -163,8 +163,10 @@ export class TabElement extends HTMLElement {
     this._labelElement.owner =
       this._twistyElement.owner =
       this._counterElement.owner =
-      this._soundButtonElement.owner =
       this.closeBoxElement.owner = this;
+    if (this._soundButtonElement) {
+      this._soundButtonElement.owner = this;
+    }
   }
 
   // Elements restored from cache are initialized without bundled tabs.
