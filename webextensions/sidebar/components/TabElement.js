@@ -160,10 +160,14 @@ export class TabElement extends HTMLElement {
         this.invalidateTooltip();
       });
     }
+
     this._labelElement.owner =
-      this._twistyElement.owner =
       this._counterElement.owner =
       this.closeBoxElement.owner = this;
+
+    if (this._twistyElement) {
+      this._twistyElement.owner = this;
+    }
     if (this._soundButtonElement) {
       this._soundButtonElement.owner = this;
     }
