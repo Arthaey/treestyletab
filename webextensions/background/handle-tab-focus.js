@@ -33,13 +33,14 @@ let mMaybeTabSwitchingByShortcut = false;
 
 
 Tab.onActivating.addListener((tab, info = {}) => { // return false if the activation should be canceled
-  log('Tabs.onActivating ', dumpTab(tab), info);
+  log('Tabs.onActivating ', { tab: dumpTab(tab), info });
   if (tab.$TST.shouldReloadOnSelect) {
     browser.tabs.reload(tab.id)
       .catch(ApiTabs.createErrorHandler(ApiTabs.handleMissingTabError));
     delete tab.$TST.shouldReloadOnSelect;
   }
   const window = TabsStore.windows.get(tab.windowId);
+  log('  lastActiveTab: ', window.lastActiveTab);
   cancelDelayedExpand(Tab.get(window.lastActiveTab));
   const shouldSkipCollapsed = (
     !info.byInternalOperation &&
@@ -103,7 +104,8 @@ Tab.onActivating.addListener((tab, info = {}) => { // return false if the activa
           successor = Tab.getFirstVisibleTab(tab.windowId);
         log('=> ', successor.id);
       }
-      else if (successor.discarded &&
+      else if (!mTabSwitchedByShortcut && // intentonal focus to a discarded tabs by Ctrl-Tab/Ctrl-Shift-Tab is always allowed!
+               successor.discarded &&
                configs.avoidDiscardedTabToBeActivatedIfPossible) {
         log('=> redirect successor (successor is discarded)');
         successor = successor.$TST.nearestLoadedTabInTree ||
@@ -125,6 +127,7 @@ Tab.onActivating.addListener((tab, info = {}) => { // return false if the activa
            (!configs.autoCollapseExpandSubtreeOnSelect ||
             configs.autoCollapseExpandSubtreeOnSelectExceptActiveTabRemove)) {
     log('=> reaction for removing current tab');
+    window.lastActiveTab = tab.id;
     return true;
   }
   else if (tab.$TST.hasChild &&
